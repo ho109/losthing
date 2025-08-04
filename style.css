@@ -1,0 +1,105 @@
+body {
+  font-family: Arial, sans-serif;
+  background-color: #f4f4f4;
+  text-align: center;
+  margin: 0;
+  padding: 20px;
+}
+
+.container {
+  max-width: 500px;
+  margin: auto;
+  background: white;
+  padding: 20px;
+  border-radius: 10px;
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+}
+
+.floor-buttons button {
+  margin: 8px;
+  padding: 10px 15px;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.lost-items li {
+  list-style: none;
+  margin: 10px 0;
+  padding: 10px;
+  background: #eee;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.lost-items img {
+  width: 100px;
+  height: 100px;
+  object-fit: cover;
+  margin: 5px 0;
+}
+
+.input-section input[type="text"] {
+  width: 70%;
+  padding: 8px;
+}
+
+.input-section input[type="file"] {
+  margin-top: 10px;
+}
+
+.input-section button {
+  padding: 8px;
+  margin-top: 10px;
+  cursor: pointer;
+}
+
+.bottom-buttons {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+}
+
+.bottom-buttons button {
+  margin: 5px;
+  padding: 10px;
+  color: white;
+  border: none;
+  font-size: 14px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.green { background-color: green; }
+.red { background-color: red; }
+
+#guide-button {
+  position: fixed;
+  left: 20px;
+  bottom: 20px;
+  background: blue;
+  color: white;
+  padding: 10px;
+  border-radius: 5px;
+  border: none;
+  cursor: pointer;
+}
+
+.guide-popup {
+  display: none;
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  background: white;
+  padding: 20px;
+  border-radius: 10px;
+  width: 300px;
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.2);
+  text-align: left;
+}
+
+.close-button {
+  float: right;
+  cursor: pointer;
+  font-size: 18px;
+}
