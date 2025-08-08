@@ -14,10 +14,12 @@
     <div>
       <span class="close-button" onclick="closeGuide()">×</span>
       <h3>📌 분실물 찾기 안내</h3>
-      <p>🔍 검색창에 분실물 이름을 입력하세요.</p>
-      <p>📍 사진 잘 안보이면 사진 누르세요 그럼 확대됨</p>
-      <p>✏️ 등록하려면 층 선택 후 이름 입력 + 사진 첨부 → "입력"</p>
-      <p>🗑️ 삭제하려면 항목 텍스트를 클릭하면 됩니다.</p>
+      <p> 검색창에 분실물 이름을 입력하세요.</p>
+      <p> 사진 잘 안보이면 사진 누르세요 그럼 확대됩니다.</p>
+      <p> 등록하려면 층 선택 후 이름 입력 + 사진 첨부 (선택) → "입력"</p>
+      <p> 삭제하려면 항목 텍스트를 클릭하면 됩니다.</p>
+      <p> 오류 생길시 새로고침하거나 천천히 다시 해주세요.</p>
+      <p> 문의는 253505@naegok.ms.kr 에다가 gmail 보내주세요</p>
     </div>
   </div>
 
@@ -54,6 +56,13 @@
   <span onclick="closeImagePopup()" 
         style="position:absolute; top:20px; right:40px; font-size:40px; color:white; cursor:pointer;">&times;</span>
 </div>
+
+<!-- ✅ 오른쪽 고정 공지창 -->
+<div id="school-notice">
+  <h4>📢 학교 공지</h4>
+  <p id="notice-text">공지 내용을 불러오는 중...</p>
+</div>
+
 
 
   <!-- ✅ Firebase SDK -->
