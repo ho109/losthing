@@ -6,7 +6,24 @@ body {
   padding: 20px;
 }
 
-/* ✅ 메인 컨테이너 */
+/* 화면 전환 공통 */
+.screen { display: none; }
+.screen.active { display: block; }
+.hidden { display: none !important; }
+.row { display:flex; gap:10px; align-items:center; justify-content:center; flex-wrap:wrap; }
+.muted { color:#888; font-size:13px; }
+.divider { height:1px; background:#eee; margin:16px 0; }
+.page-top { margin-top:48px; }
+
+/* 버튼 스타일 */
+.mode-btn { padding:12px 18px; }
+.back-btn { position:fixed; top:10px; left:10px; }
+.selected-mode {
+  background-color: #555 !important; /* 진한 회색 */
+  color: #fff !important;
+}
+
+/* 메인 컨테이너 */
 .container {
   max-width: 500px;
   margin: auto;
@@ -16,7 +33,7 @@ body {
   box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
 }
 
-/* ✅ 층 선택 버튼 */
+/* 층 선택 버튼 */
 .floor-buttons button {
   margin: 8px;
   padding: 12px 20px;
@@ -25,14 +42,14 @@ body {
   border-radius: 6px;
   border: none;
   background: #74d5ff;
-  color: rgb(0, 0, 0);
+  color: #000;
   transition: 0.2s;
 }
 .floor-buttons button:hover {
   background: #ffffff;
 }
 
-/* ✅ 분실물 리스트 */
+/* 분실물 리스트 */
 .lost-items {
   padding-left: 0;
   margin: 0 auto;
@@ -53,7 +70,7 @@ body {
   box-shadow: 0 6px 12px rgba(0, 0, 0, 0.25);
 }
 
-/* ✅ 분실물 이미지 */
+/* 분실물 이미지 */
 .lost-items img {
   width: 100px;
   height: 100px;
@@ -62,7 +79,7 @@ body {
   border-radius: 5px;
 }
 
-/* ✅ 입력 영역 */
+/* 입력 영역 */
 .input-section input[type="text"] {
   width: 70%;
   padding: 8px;
@@ -84,26 +101,8 @@ body {
   background: #27ae60;
 }
 
-/* ✅ 하단 안내 버튼 */
-.bottom-buttons {
-  position: fixed;
-  right: 20px;
-  bottom: 20px;
-}
-.bottom-buttons button {
-  margin: 10px;
-  padding: 15px;
-  color: white;
-  border: none;
-  font-size: 15px;
-  border-radius: 5px;
-  cursor: pointer;
-}
-.green { background-color: green; }
-.red { background-color: red; }
-
-/* ✅ 가이드 버튼 */
-#guide-button {
+/* 가이드 버튼 */
+.guide-btn {
   position: fixed;
   left: 20px;
   bottom: 20px;
@@ -115,11 +114,11 @@ body {
   cursor: pointer;
 }
 
-/* ✅ 오른쪽 공지창 */
+/* 오른쪽 공지창 */
 #school-notice {
   position: fixed;
   right: 30px;
-  bottom: 500px;   /* ✅ 하단 버튼 위로 */
+  bottom: 500px;   /* 하단 버튼 위로 */
   transform: none;
   background: white;
   padding: 15px 20px;
@@ -131,7 +130,7 @@ body {
   cursor: pointer;
 }
 
-/* ✅ 공지 리스트 스타일 */
+/* 공지 리스트 스타일 */
 #school-notice ul {
   padding-left: 18px;
   margin: 0;
@@ -148,24 +147,15 @@ body {
   border-radius: 4px;
   padding: 2px 4px;
 }
+#school-notice.dragging { opacity: 0.9; cursor: grabbing; }
+#school-notice.expanded ul { max-height: 250px; }
 
-/* ✅ 공지창 드래그 시 */
-#school-notice.dragging {
-  opacity: 0.9;
-  cursor: grabbing;
-}
-
-/* ✅ 공지창 확장 모드 */
-#school-notice.expanded ul {
-  max-height: 250px;
-}
-
-/* ✅ 왼쪽 가이드 팝업 */
+/* 왼쪽 가이드 팝업 */
 .guide-popup {
   display: none;
   position: fixed;
   top: 50%;
-  left: 30px;              /* 왼쪽 고정 */
+  left: 30px;
   transform: translateY(-50%);
   background: white;
   padding: 20px;
@@ -173,20 +163,29 @@ body {
   width: 300px;
   box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
   text-align: left;
-  cursor: default;         /* 드래그용 커서 제거 */
+  cursor: default;
   animation: slideIn 0.3s ease;
 }
-
-
-/* ✅ 부드럽게 나타나는 애니메이션 */
+/* 부드럽게 나타나는 애니메이션 */
 @keyframes slideIn {
   from { opacity: 0; transform: translateX(-50px) translateY(-50%); }
   to { opacity: 1; transform: translateX(0) translateY(-50%); }
 }
+.close-button { float: right; cursor: pointer; font-size: 18px; }
 
-/* ✅ 팝업 닫기 버튼 */
-.close-button {
-  float: right;
-  cursor: pointer;
-  font-size: 18px;
+/* 이미지 팝업 */
+.image-popup {
+  display:none; position:fixed; top:0; left:0; width:100%; height:100%;
+  background:rgba(0,0,0,0.8); justify-content:center; align-items:center; z-index:999;
+}
+.image-popup img {
+  max-width:90%; max-height:90%; border:3px solid white; box-shadow:0 0 10px black;
+}
+.image-close {
+  position:absolute; top:20px; right:40px; font-size:40px; color:white; cursor:pointer;
+}
+
+/* 로그인 입력 레이아웃 */
+.login-grid {
+  display:grid; gap:8px; justify-content:center;
 }
