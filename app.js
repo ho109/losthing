@@ -1,420 +1,299 @@
-// /***** Firebase 기본 설정 *****/
-const firebaseConfig = {
-  apiKey: "AIzaSyBo-zidIl1mJbseet9BUtSfhGwL6hzlnLc",
-  authDomain: "ho109-6eb98.firebaseapp.com",
-  projectId: "ho109-6eb98",
-  storageBucket: "ho109-6eb98.appspot.com",
-  messagingSenderId: "899224052562",
-  appId: "1:899224052562:web:8bde649db9067d56c3908b",
-  measurementId: "G-LMH7VZHRQJ"
-};
-firebase.initializeApp(firebaseConfig);
-const db = firebase.firestore();
+// app.js (관리자 강제 삭제/리스트 즉시 삭제 포함 전체본)
 
-/***** 전역 상태 *****/
-let selectedFloor = 1;      // 현재 선택 층
-let role = "guest";         // 'guest' | 'admin'
-let currentAdminId = null;  // 로그인한 관리자 아이디(옵션)
+// 1) API 임포트 (최상단)
+import {
+  API, login, getToken, clearToken,
+  listItems, getItem, createItem, updateItem, deleteItem
+} from './api.js';
 
-/** 하드코딩 관리자 계정 (원하는 아이디:비밀번호로 수정) */
-const ADMIN_CREDENTIALS = {
-  "a": "b",
-  // "teacher": "ngms2025",
-};
+// 2) 이미지 경로 정규화
+function toSrc(u) {
+  if (!u) return '';
+  if (u.startsWith('data:') || u.startsWith('http://') || u.startsWith('https://')) return u;
+  if (u.startsWith('/')) return `${API}${u}`;
+  return u;
+}
 
-/***** 공용 유틸 *****/
+// ---- 상태 ----
+let selectedFloor = 0;   // 0 = 전체
+let editing = null;      // { id, floor } | null
+
+// ---- 유틸 ----
+const $ = (s) => document.querySelector(s);
+
 function showScreen(id) {
-  document.querySelectorAll(".screen").forEach(s => s.classList.remove("active"));
-  document.getElementById(id).classList.add("active");
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById(id)?.classList.add('active');
 }
-
-function syncButtonsByRole() {
-  const goManageBtn = document.getElementById("go-manage");
-  if (goManageBtn) goManageBtn.classList.toggle("hidden", role !== "admin");
-}
-
-/***** ① 입장 선택 화면 *****/
-/***** ① 입장 선택 화면 *****/
-function mountScreen1() {
-  const btnGuest = document.getElementById("btn-guest");
-  const btnAdmin = document.getElementById("btn-admin");
-  const adminBox = document.getElementById("admin-login-box");
-  const btnAdminSubmit = document.getElementById("btn-admin-submit");
-  const goListFrom1 = document.getElementById("go-list-from-1");
-
-  // 선택한 로그인 방식 버튼 강조
-  function highlightSelection(selectedBtn) {
-    btnGuest.classList.remove("selected-mode");
-    btnAdmin.classList.remove("selected-mode");
-    selectedBtn.classList.add("selected-mode");
+function setActiveTab(f) {
+  for (let i = 0; i <= 4; i++) {
+    document.getElementById(`tab-${i}`)?.classList.toggle('active', i === f);
   }
+}
+function isAdmin() { return !!getToken(); }
+function syncRoleUI() {
+  $('#fab-manage')?.classList.toggle('hidden', !isAdmin());
+  $('#btn-edit')?.classList.toggle('hidden', !isAdmin());
+  $('#btn-delete')?.classList.toggle('hidden', !isAdmin());
+}
 
-  btnGuest.onclick = () => {
-    role = "guest";
-    currentAdminId = null;
-    adminBox.classList.add("hidden");
-    highlightSelection(btnGuest);
-    alert("비회원 모드로 입장합니다.");
+// 공통: 안전 삭제 핸들러
+async function safeDelete(id) {
+  try {
+    await deleteItem(id);
+    alert('삭제되었습니다.');
+    // 상세 화면에서 왔다면 목록으로
+    showScreen('screen-2');
+    await renderList();
+  } catch (e) {
+    console.error(e);
+    alert('삭제에 실패했습니다.');
+  }
+}
+
+// ========================= 로그인 =========================
+function mountLogin() {
+  const idEl = $('#admin-id');
+  const pwEl = $('#admin-pw');
+
+  const goList = () => {
+    showScreen('screen-2');
+    setActiveTab(selectedFloor);
+    syncRoleUI();
+    renderList();
   };
 
-  btnAdmin.onclick = () => {
-    adminBox.classList.remove("hidden");
-    highlightSelection(btnAdmin);
-  };
+  $('#btn-admin-submit')?.addEventListener('click', async () => {
+    const id = (idEl?.value || '').trim();
+    const pw = (pwEl?.value || '').trim();
+    if (!id || !pw) return alert('아이디/비밀번호를 입력하세요.');
+    try {
+      await login(id, pw); // a / b
+      alert('관리자 로그인 성공');
+      goList();
+    } catch (e) {
+      console.error(e);
+      alert('로그인 실패');
+    }
+  });
 
-  // ✅ 관리자 로그인 성공 시 바로 리스트 화면으로 이동
-  btnAdminSubmit.onclick = () => {
-    const id = (document.getElementById("admin-id").value || "").trim();
-    const pw = (document.getElementById("admin-pw").value || "").trim();
-    if (!id || !pw) {
-      alert("아이디/비밀번호를 입력하세요.");
+  $('#btn-guest-enter')?.addEventListener('click', () => {
+    clearToken();
+    goList();
+  });
+}
+
+// ========================= 목록/검색 =========================
+async function renderList() {
+  try {
+    const q = ($('#search-input')?.value || '').trim();
+    const items = await listItems({ floor: selectedFloor, q });
+    const ul = $('#lost-items');
+    ul.innerHTML = '';
+
+    items.forEach(it => {
+      const li = document.createElement('li');
+      li.className = 'card';
+      li.dataset.id = it.id;
+      li.style.position = 'relative'; // 관리자 삭제 버튼 배치용
+
+      // 이미지
+      const img = document.createElement('img');
+      img.className = 'card-img';
+      img.alt = it.title || '이미지';
+      img.src = toSrc(it.imageUrl);
+      img.onerror = () => img.classList.add('hidden');
+      img.onload  = () => img.classList.remove('hidden');
+      li.appendChild(img);
+
+      // 메타
+      const meta = document.createElement('div');
+      meta.className = 'card-meta';
+      const floorEl = document.createElement('div');
+      floorEl.className = 'card-floor';
+      floorEl.textContent = `${it.floor}층`;
+      const nameEl = document.createElement('div');
+      nameEl.className = 'card-name';
+      nameEl.textContent = it.title || '(제목 없음)';
+      meta.appendChild(floorEl);
+      meta.appendChild(nameEl);
+      li.appendChild(meta);
+
+      // 관리자 전용: 리스트에서 바로 삭제
+      if (isAdmin()) {
+        const delBtn = document.createElement('button');
+        delBtn.textContent = '삭제';
+        delBtn.title = '이 항목 삭제';
+        delBtn.setAttribute('aria-label', '항목 삭제');
+        Object.assign(delBtn.style, {
+          position: 'absolute',
+          right: '8px',
+          top: '8px',
+          padding: '4px 8px',
+          border: 'none',
+          borderRadius: '8px',
+          background: 'rgba(0,0,0,0.55)',
+          color: '#fff',
+          cursor: 'pointer',
+          fontSize: '12px'
+        });
+        delBtn.addEventListener('click', async (e) => {
+          e.stopPropagation(); // 상세 열림 방지
+          if (!confirm('이 항목을 삭제하시겠습니까?')) return;
+          await safeDelete(it.id);
+        });
+        li.appendChild(delBtn);
+      }
+
+      // 클릭 → 상세
+      li.addEventListener('click', () => openDetail(it.id));
+      ul.appendChild(li);
+    });
+  } catch (e) {
+    console.error(e);
+    alert('목록을 불러오지 못했습니다.');
+  }
+}
+
+function mountList() {
+  // 탭
+  for (let i = 0; i <= 4; i++) {
+    document.getElementById(`tab-${i}`)?.addEventListener('click', () => {
+      selectedFloor = i;
+      setActiveTab(i);
+      renderList();
+    });
+  }
+  // 검색
+  $('.search-btn')?.addEventListener('click', renderList);
+  $('#search-input')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') renderList();
+  });
+
+  // 글쓰기 FAB
+  $('#fab-manage')?.addEventListener('click', () => openCompose(null));
+}
+
+// ========================= 상세 =========================
+async function openDetail(id) {
+  try {
+    const it = await getItem(id);
+    $('#detail-title').textContent = it.title || '(제목 없음)';
+    $('#detail-floor').textContent = `보관 위치 : ${it.floor}층`;
+
+    const img = $('#detail-image');
+    if (it.imageUrl) {
+      img.src = toSrc(it.imageUrl);
+      img.classList.remove('hidden');
+      img.onerror = () => img.classList.add('hidden');
+    } else {
+      img.classList.add('hidden');
+    }
+    $('#detail-desc').textContent = it.desc || '';
+
+    syncRoleUI();
+    showScreen('screen-4');
+
+    // 편집/삭제 핸들러
+    $('#btn-edit').onclick = () =>
+      openCompose({ id: it.id, floor: it.floor, title: it.title, desc: it.desc, imageUrl: it.imageUrl });
+
+    $('#btn-delete').onclick = async () => {
+      if (!confirm('이 항목을 삭제하시겠습니까?')) return;
+      await safeDelete(it.id);
+    };
+  } catch (e) {
+    console.error(e);
+    // ✅ 상세가 깨져도 관리자라면 강제 삭제 가능
+    if (isAdmin() && confirm('상세를 불러오지 못했습니다. 이 항목을 강제로 삭제할까요?')) {
+      await safeDelete(id);
       return;
     }
-    const expected = ADMIN_CREDENTIALS[id];
-    if (expected && expected === pw) {
-      role = "admin";
-      currentAdminId = id;
-      console.log("[login] admin:", id); // 확인용 로그
-      alert("관리자 로그인 성공");
-
-      // 관리자 UI 반영 후 화면 전환
-      syncButtonsByRole();
-      highlightSelection(btnAdmin);
-      showScreen("screen-2");   // ← 바로 전환
-      selectFloor(1);
-      loadNotice();
-    } else {
-      role = "guest";
-      currentAdminId = null;
-      alert("아이디 또는 비밀번호가 올바르지 않습니다.");
-      highlightSelection(btnGuest);
-    }
-  };
-
-  // 게스트 또는 테스트용: 리스트로 이동
-  goListFrom1.onclick = () => {
-    showScreen("screen-2");
-    syncButtonsByRole();
-    selectFloor(1);
-    loadNotice();
-  };
-}
-
-/***** ② 물품 리스트/공통 렌더 *****/
-async function selectFloor(floor) {
-  selectedFloor = floor;
-
-  const t1 = document.getElementById("floor-title");
-  if (t1) t1.innerText = `${floor}층 분실물`;
-
-  const t2 = document.getElementById("floor-title-manage");
-  if (t2) t2.innerText = `${floor}층 분실물`;
-
-  renderItems("lost-items");          // 화면②
-  renderItems("lost-items-manage");   // 화면③
-}
-
-async function renderItems(targetUlId) {
-  const list = document.getElementById(targetUlId);
-  if (!list) return;
-  list.innerHTML = "";
-
-  const doc = await db.collection("lostItems").doc(`floor${selectedFloor}`).get();
-  const items = (doc.exists ? (doc.data().items || []) : []).slice(-30);
-
-  items.forEach((item, index) => {
-    const li = document.createElement("li");
-
-    // 이미지(있으면)
-    if (item.image) {
-      const img = document.createElement("img");
-      img.src = item.image;
-      img.style.cursor = "pointer";
-      img.onclick = (e) => {
-        e.stopPropagation();
-        showImagePopup(item.image);
-      };
-      li.appendChild(img);
-    }
-
-    // 텍스트 (관리자만 클릭 삭제)
-    const text = document.createElement("p");
-    text.innerText = item.name;
-    if (role === "admin") {
-      text.style.cursor = "pointer";
-      text.title = "클릭하면 삭제";
-      text.onclick = () => deleteItem(index, items);
-    } else {
-      text.style.cursor = "default";
-    }
-    li.appendChild(text);
-
-    list.appendChild(li);
-  });
-}
-
-/***** 등록(관리자 전용) *****/
-async function addItem() {
-  if (role !== "admin") {
-    alert("관리자만 등록할 수 있습니다.");
-    return;
+    alert('상세를 불러오지 못했습니다.');
   }
-  const input = document.getElementById("item-input");
-  const imageInput = document.getElementById("item-image");
-  const itemName = (input?.value || "").trim();
-  const imageFile = imageInput?.files?.[0];
+}
 
-  if (!itemName) {
-    alert("이름을 입력하세요.");
-    return;
+function mountDetailNav() {
+  $('#btn-back-detail')?.addEventListener('click', () => showScreen('screen-2'));
+}
+
+// ========================= 글쓰기/수정 =========================
+function openCompose(prefill) {
+  if (!isAdmin()) { alert('관리자만 작성할 수 있습니다.'); return; }
+  editing = prefill ? { id: prefill.id, floor: prefill.floor } : null;
+
+  $('#form-title').value = prefill?.title || '';
+  $('#form-floor').value = prefill?.floor ?? '';
+  $('#form-desc').value  = prefill?.desc  || '';
+
+  const pv = $('#form-preview');
+  if (prefill?.imageUrl) {
+    pv.src = toSrc(prefill.imageUrl);
+    pv.classList.remove('hidden');
+  } else {
+    pv.src = '';
+    pv.classList.add('hidden');
   }
 
-  const newItem = { name: itemName, image: null };
+  $('#btn-submit').textContent = editing ? '수정 저장' : '글 등록하기';
+  showScreen('screen-3');
+}
 
-  const saveItem = async () => {
-    const ref = db.collection("lostItems").doc(`floor${selectedFloor}`);
-    const snap = await ref.get();
-    const items = snap.exists ? (snap.data().items || []) : [];
-    items.push(newItem);
-    await ref.set({ items });
-    input.value = "";
-    if (imageInput) imageInput.value = "";
-    renderItems("lost-items");
-    renderItems("lost-items-manage");
-  };
+async function submitCompose() {
+  if (!isAdmin()) return alert('관리자만 등록/수정할 수 있습니다.');
 
-  if (imageFile) {
+  const title = ($('#form-title').value || '').trim();
+  const floor = Number($('#form-floor').value);
+  const desc  = ($('#form-desc').value || '').trim();
+  const file  = $('#form-image').files[0];
+
+  if (!title) return alert('제목을 입력하세요.');
+  if (![1, 2, 3, 4].includes(floor)) return alert('보관 위치(층)를 선택하세요.');
+
+  try {
+    if (editing) {
+      await updateItem(editing.id, { title, floor, desc, file });
+    } else {
+      await createItem({ title, floor, desc, file });
+    }
+    // reset
+    $('#form-title').value = '';
+    $('#form-floor').value = '';
+    $('#form-desc').value  = '';
+    $('#form-image').value = '';
+    $('#form-preview').classList.add('hidden');
+
+    showScreen('screen-2');
+    renderList();
+  } catch (e) {
+    console.error(e);
+    alert('저장에 실패했습니다.');
+  }
+}
+
+function mountCompose() {
+  // 이미지 미리보기
+  $('#form-image')?.addEventListener('change', () => {
+    const f = $('#form-image').files[0];
+    const pv = $('#form-preview');
+    if (!f) { pv.classList.add('hidden'); return; }
     const reader = new FileReader();
-    reader.onload = (e) => {
-      newItem.image = e.target.result;
-      saveItem();
-    };
-    reader.readAsDataURL(imageFile);
-  } else {
-    saveItem();
-  }
-}
-
-/***** 삭제(관리자 전용) *****/
-async function deleteItem(index, items) {
-  if (role !== "admin") {
-    alert("관리자만 삭제할 수 있습니다.");
-    return;
-  }
-  if (!confirm("이 분실물을 삭제하시겠습니까?")) return;
-  items.splice(index, 1);
-  await db.collection("lostItems").doc(`floor${selectedFloor}`).set({ items });
-  renderItems("lost-items");
-  renderItems("lost-items-manage");
-}
-
-/***** 검색(보기 공통, 삭제는 관리자만) *****/
-async function searchItems() {
-  const query = (document.getElementById("search-input").value || "")
-    .toLowerCase().trim();
-
-  const list = document.getElementById("lost-items");
-  if (list) list.innerHTML = "";
-  if (!query) {
-    alert("검색어를 입력하세요.");
-    return;
-  }
-
-  let foundItems = [];
-  for (let floor = 1; floor <= 4; floor++) {
-    const doc = await db.collection("lostItems").doc(`floor${floor}`).get();
-    const items = doc.exists ? (doc.data().items || []) : [];
-    const matched = items
-      .filter(item => (item.name || "").toLowerCase().includes(query))
-      .map(item => ({ ...item, floor }));
-    foundItems = foundItems.concat(matched);
-  }
-
-  const title = document.getElementById("floor-title");
-  if (title) title.innerText = `🔍 '${query}' 검색 결과`;
-
-  if (foundItems.length === 0) {
-    alert(`'${query}'을(를) 찾을 수 없습니다.`);
-    return;
-  }
-
-  const ul = document.getElementById("lost-items");
-  if (!ul) return;
-  ul.innerHTML = "";
-
-  foundItems.forEach(item => {
-    const li = document.createElement("li");
-
-    const floorTag = document.createElement("span");
-    floorTag.textContent = `[${item.floor}층] `;
-    floorTag.style.fontWeight = "bold";
-    li.appendChild(floorTag);
-
-    const name = document.createElement("span");
-    name.textContent = item.name;
-
-    if (role === "admin") {
-      name.style.cursor = "pointer";
-      name.title = "클릭하면 삭제";
-      name.onclick = () => deleteItemFromSearch(item.floor, item.name);
-    }
-    li.appendChild(name);
-
-    if (item.image) {
-      const img = document.createElement("img");
-      img.src = item.image;
-      img.style.cursor = "pointer";
-      img.onclick = (e) => {
-        e.stopPropagation();
-        showImagePopup(item.image);
-      };
-      li.appendChild(document.createElement("br"));
-      li.appendChild(img);
-    }
-
-    ul.appendChild(li);
+    reader.onload = (e) => { pv.src = e.target.result; pv.classList.remove('hidden'); };
+    reader.readAsDataURL(f);
   });
+
+  $('#btn-submit')?.addEventListener('click', submitCompose);
+  $('#btn-back-2')?.addEventListener('click', () => showScreen('screen-2'));
 }
 
-async function deleteItemFromSearch(floor, name) {
-  if (role !== "admin") {
-    alert("관리자만 삭제할 수 있습니다.");
-    return;
-  }
-  if (!confirm(`[${floor}층] '${name}'을(를) 삭제하시겠습니까?`)) return;
-  const ref = db.collection("lostItems").doc(`floor${floor}`);
-  const docSnap = await ref.get();
-  if (!docSnap.exists) return;
-  let items = docSnap.data().items || [];
-  items = items.filter(i => i.name !== name);
-  await ref.set({ items });
-  alert("삭제 완료");
-  searchItems();
-}
+// ========================= 부트스트랩 =========================
+window.addEventListener('load', () => {
+  mountLogin();
+  mountList();
+  mountCompose();
+  mountDetailNav();
 
-/***** 공지 (보기 공통, 수정은 관리자만) *****/
-async function loadNotice() {
-  const ref = db.collection("settings").doc("schoolNotice");
-  const docSnap = await ref.get();
-  const listBox = document.getElementById("notice-text");
-  if (!listBox) return;
-  listBox.innerHTML = "";
-
-  let notices = [];
-  if (docSnap.exists) {
-    notices = docSnap.data().items || [];
-    const ul = document.createElement("ul");
-    if (notices.length === 0) {
-      ul.innerHTML = "<li>현재 공지가 없습니다.</li>";
-    } else {
-      notices.forEach((n, i) => {
-        const li = document.createElement("li");
-        li.textContent = n;
-        if (role === "admin") {
-          li.onclick = (e) => {
-            e.stopPropagation();
-            if (confirm(`'${n}' 공지를 삭제할까요?`)) deleteNotice(i);
-          };
-        }
-        ul.appendChild(li);
-      });
-    }
-    listBox.appendChild(ul);
-  } else {
-    listBox.innerHTML = "<ul><li>현재 공지가 없습니다.</li></ul>";
-  }
-
-  const noticeBox = document.getElementById("school-notice");
-  if (noticeBox) {
-    noticeBox.onclick = async () => {
-      if (role !== "admin") return; // 게스트 클릭 무시
-      const choice = prompt("공지 관리\n \n1. 수정\n2. 새 공지 추가\n 취소하려면 ESC");
-      if (choice === "1") editNotice(notices);
-      else if (choice === "2") {
-        const newText = prompt("새 공지를 입력하세요:");
-        if (newText && newText.trim() !== "") {
-          notices.push(newText.trim());
-          await ref.set({ items: notices });
-          loadNotice();
-        }
-      }
-    };
-  }
-}
-
-async function editNotice(notices) {
-  if (role !== "admin") return;
-  const ref = db.collection("settings").doc("schoolNotice");
-  const current = notices.join("\n");
-  const newText = prompt("공지 수정 (줄바꿈으로 여러 줄 입력):", current);
-  if (newText !== null) {
-    const items = newText.split("\n").map(t => t.trim()).filter(Boolean);
-    await ref.set({ items });
-    loadNotice();
-  }
-}
-
-async function deleteNotice(index) {
-  if (role !== "admin") return;
-  const ref = db.collection("settings").doc("schoolNotice");
-  const docSnap = await ref.get();
-  if (!docSnap.exists) return;
-  let items = docSnap.data().items || [];
-  items.splice(index, 1);
-  await ref.set({ items });
-  loadNotice();
-}
-
-/***** 이미지 팝업 / 가이드 *****/
-function showImagePopup(url) {
-  const popup = document.getElementById("image-popup");
-  const img = document.getElementById("popup-img");
-  if (!popup || !img) return;
-  img.src = url;
-  popup.style.display = "flex";
-}
-function closeImagePopup() {
-  const popup = document.getElementById("image-popup");
-  if (popup) popup.style.display = "none";
-}
-function showGuide() {
-  const guide = document.getElementById("guide-popup");
-  if (!guide) return;
-  guide.style.display = "block";
-  guide.style.left = "30px";
-  guide.style.top = "50%";
-  guide.style.transform = "translateY(-50%)";
-}
-function closeGuide() {
-  const guide = document.getElementById("guide-popup");
-  if (guide) guide.style.display = "none";
-}
-
-/***** 화면 전환 네비게이션 *****/
-function mountNavBetweenScreens() {
-  const back1 = document.getElementById("btn-back-1");
-  const back2 = document.getElementById("btn-back-2");
-  const goManage = document.getElementById("go-manage");
-
-  if (back1) back1.onclick = () => showScreen("screen-1");
-  if (back2) back2.onclick = () => showScreen("screen-2");
-
-  if (goManage) {
-    goManage.onclick = () => {
-      if (role !== "admin") {
-        alert("관리자만 접근 가능합니다.");
-        return;
-      }
-      showScreen("screen-3");
-      renderItems("lost-items-manage");
-    };
-  }
-}
-
-/***** 초기 실행 *****/
-window.onload = () => {
-  mountScreen1();
-  mountNavBetweenScreens();
-  selectFloor(1);
-  loadNotice();
-};
+  // 첫 화면은 로그인
+  showScreen('screen-1');
+  syncRoleUI();
+});
