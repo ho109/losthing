@@ -2,7 +2,7 @@
 export const API =
   location.hostname === 'localhost' || location.hostname === '127.0.0.1'
     ? 'http://127.0.0.1:4000'          // 개발용 로컬
-    : 'https://lostfound-backend-c32o.onrender.com';
+    : 'https://lostfound-backend-t2kv.onrender.com/';
 
 // 토큰 저장/가져오기
 const tokenKey = 'lf_token';

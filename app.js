@@ -1,12 +1,12 @@
-// app.js (관리자 강제 삭제/리스트 즉시 삭제 포함 전체본)
+// app.js (최신 전체본)
 
-// 1) API 임포트 (최상단)
+// 1) API 모듈 임포트는 파일 최상단
 import {
   API, login, getToken, clearToken,
   listItems, getItem, createItem, updateItem, deleteItem
 } from './api.js';
 
-// 2) 이미지 경로 정규화
+// 2) 이미지 경로 정규화 유틸
 function toSrc(u) {
   if (!u) return '';
   if (u.startsWith('data:') || u.startsWith('http://') || u.startsWith('https://')) return u;
@@ -14,15 +14,8 @@ function toSrc(u) {
   return u;
 }
 
-// 2-1) 이미지 필드 선택 (신규: item 우선, 레거시 폴백)
-function pickImageField(obj) {
-  // ✅ 우선순위: item → itemurl → imageUrl → imageURL → image
-  const u = (obj?.item ?? obj?.itemurl ?? obj?.imageUrl ?? obj?.imageURL ?? obj?.image ?? '').trim();
-  return toSrc(u);
-}
-
 // ---- 상태 ----
-let selectedFloor = 0;   // 0 = 전체
+let selectedFloor = 0;   // 0=전체, 1~4=층
 let editing = null;      // { id, floor } | null
 
 // ---- 유틸 ----
@@ -49,7 +42,6 @@ async function safeDelete(id) {
   try {
     await deleteItem(id);
     alert('삭제되었습니다.');
-    // 상세 화면에서 왔다면 목록으로
     showScreen('screen-2');
     await renderList();
   } catch (e) {
@@ -75,7 +67,7 @@ function mountLogin() {
     const pw = (pwEl?.value || '').trim();
     if (!id || !pw) return alert('아이디/비밀번호를 입력하세요.');
     try {
-      await login(id, pw); // a / b
+      await login(id, pw); // 예: a / b
       alert('관리자 로그인 성공');
       goList();
     } catch (e) {
@@ -102,13 +94,13 @@ async function renderList() {
       const li = document.createElement('li');
       li.className = 'card';
       li.dataset.id = it.id;
-      li.style.position = 'relative'; // 관리자 삭제 버튼 배치용
+      li.style.position = 'relative';
 
       // 이미지
       const img = document.createElement('img');
       img.className = 'card-img';
       img.alt = it.title || '이미지';
-      img.src = pickImageField(it);
+      img.src = toSrc(it.imageUrl);
       img.onerror = () => img.classList.add('hidden');
       img.onload  = () => img.classList.remove('hidden');
       li.appendChild(img);
@@ -145,7 +137,7 @@ async function renderList() {
           fontSize: '12px'
         });
         delBtn.addEventListener('click', async (e) => {
-          e.stopPropagation(); // 상세 열림 방지
+          e.stopPropagation();
           if (!confirm('이 항목을 삭제하시겠습니까?')) return;
           await safeDelete(it.id);
         });
@@ -176,7 +168,6 @@ function mountList() {
   $('#search-input')?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') renderList();
   });
-
   // 글쓰기 FAB
   $('#fab-manage')?.addEventListener('click', () => openCompose(null));
 }
@@ -189,15 +180,13 @@ async function openDetail(id) {
     $('#detail-floor').textContent = `보관 위치 : ${it.floor}층`;
 
     const img = $('#detail-image');
-    const src = pickImageField(it);
-    if (src) {
-      img.src = src;
+    if (it.imageUrl) {
+      img.src = toSrc(it.imageUrl);
       img.classList.remove('hidden');
       img.onerror = () => img.classList.add('hidden');
     } else {
       img.classList.add('hidden');
     }
-
     $('#detail-desc').textContent = it.desc || '';
 
     syncRoleUI();
@@ -205,14 +194,7 @@ async function openDetail(id) {
 
     // 편집/삭제 핸들러
     $('#btn-edit').onclick = () =>
-      openCompose({
-        id: it.id,
-        floor: it.floor,
-        title: it.title,
-        desc: it.desc,
-        // ✅ 편집 프리필도 item 기준(레거시 폴백 포함)
-        item: pickImageField(it)
-      });
+      openCompose({ id: it.id, floor: it.floor, title: it.title, desc: it.desc, imageUrl: it.imageUrl });
 
     $('#btn-delete').onclick = async () => {
       if (!confirm('이 항목을 삭제하시겠습니까?')) return;
@@ -220,7 +202,7 @@ async function openDetail(id) {
     };
   } catch (e) {
     console.error(e);
-    // ✅ 상세가 깨져도 관리자라면 강제 삭제 가능
+    // 상세 실패 시에도 관리자 강제 삭제 제공
     if (isAdmin() && confirm('상세를 불러오지 못했습니다. 이 항목을 강제로 삭제할까요?')) {
       await safeDelete(id);
       return;
@@ -243,9 +225,8 @@ function openCompose(prefill) {
   $('#form-desc').value  = prefill?.desc  || '';
 
   const pv = $('#form-preview');
-  const preImg = prefill ? pickImageField(prefill) : '';
-  if (preImg) {
-    pv.src = preImg;
+  if (prefill?.imageUrl) {
+    pv.src = toSrc(prefill.imageUrl);
     pv.classList.remove('hidden');
   } else {
     pv.src = '';
@@ -269,7 +250,6 @@ async function submitCompose() {
 
   try {
     if (editing) {
-      // ✅ 서버 쪽에서 파일 없으면 기존 이미지 유지, 있으면 새로 업로드하여 item 필드로 저장
       await updateItem(editing.id, { title, floor, desc, file });
     } else {
       await createItem({ title, floor, desc, file });
