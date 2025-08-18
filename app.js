@@ -9,15 +9,17 @@ import {
 // 2) 이미지 경로 정규화
 function toSrc(u) {
   if (!u) return '';
-  if (u.startsWith('data:') || u.startsWith('http://') || u.startsWith('https://')) return u; // 절대/데이터 URL은 그대로
-  if (u.startsWith('/')) return `${API}${u}`; // /uploads/... 는 API 붙이기
+  if (u.startsWith('data:') || u.startsWith('http://') || u.startsWith('https://')) return u;
+  if (u.startsWith('/')) return `${API}${u}`;
   return u;
 }
 
-img.src = toSrc(it.imageUrl);          // 목록
-detailImage.src = toSrc(it.imageUrl);  // 상세
-preview.src = toSrc(prefill.imageUrl); // 수정 프리뷰
-
+// 2-1) 이미지 필드 선택 (신규: item 우선, 레거시 폴백)
+function pickImageField(obj) {
+  // ✅ 우선순위: item → itemurl → imageUrl → imageURL → image
+  const u = (obj?.item ?? obj?.itemurl ?? obj?.imageUrl ?? obj?.imageURL ?? obj?.image ?? '').trim();
+  return toSrc(u);
+}
 
 // ---- 상태 ----
 let selectedFloor = 0;   // 0 = 전체
@@ -106,7 +108,7 @@ async function renderList() {
       const img = document.createElement('img');
       img.className = 'card-img';
       img.alt = it.title || '이미지';
-      img.src = toSrc(it.imageUrl);
+      img.src = pickImageField(it);
       img.onerror = () => img.classList.add('hidden');
       img.onload  = () => img.classList.remove('hidden');
       li.appendChild(img);
@@ -187,13 +189,15 @@ async function openDetail(id) {
     $('#detail-floor').textContent = `보관 위치 : ${it.floor}층`;
 
     const img = $('#detail-image');
-    if (it.imageUrl) {
-      img.src = toSrc(it.imageUrl);
+    const src = pickImageField(it);
+    if (src) {
+      img.src = src;
       img.classList.remove('hidden');
       img.onerror = () => img.classList.add('hidden');
     } else {
       img.classList.add('hidden');
     }
+
     $('#detail-desc').textContent = it.desc || '';
 
     syncRoleUI();
@@ -201,7 +205,14 @@ async function openDetail(id) {
 
     // 편집/삭제 핸들러
     $('#btn-edit').onclick = () =>
-      openCompose({ id: it.id, floor: it.floor, title: it.title, desc: it.desc, imageUrl: it.imageUrl });
+      openCompose({
+        id: it.id,
+        floor: it.floor,
+        title: it.title,
+        desc: it.desc,
+        // ✅ 편집 프리필도 item 기준(레거시 폴백 포함)
+        item: pickImageField(it)
+      });
 
     $('#btn-delete').onclick = async () => {
       if (!confirm('이 항목을 삭제하시겠습니까?')) return;
@@ -232,8 +243,9 @@ function openCompose(prefill) {
   $('#form-desc').value  = prefill?.desc  || '';
 
   const pv = $('#form-preview');
-  if (prefill?.imageUrl) {
-    pv.src = toSrc(prefill.imageUrl);
+  const preImg = prefill ? pickImageField(prefill) : '';
+  if (preImg) {
+    pv.src = preImg;
     pv.classList.remove('hidden');
   } else {
     pv.src = '';
@@ -257,6 +269,7 @@ async function submitCompose() {
 
   try {
     if (editing) {
+      // ✅ 서버 쪽에서 파일 없으면 기존 이미지 유지, 있으면 새로 업로드하여 item 필드로 저장
       await updateItem(editing.id, { title, floor, desc, file });
     } else {
       await createItem({ title, floor, desc, file });
