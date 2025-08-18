@@ -101,10 +101,24 @@ async function renderList() {
       const img = document.createElement('img');
       img.className = 'card-img';
       img.alt = it.title || '이미지';
-      img.src = toSrc(it.imageUrl);
-      img.onerror = () => img.classList.add('hidden');
-      img.onload  = () => img.classList.remove('hidden');
-      li.appendChild(img);
+
+      // 절대/상대 URL 정규화
+      const resolved = toSrc(it.imageUrl || '');
+
+      // 기본/대체 이미지 (회색 박스 유지)
+      const FALLBACK =
+      'data:image/svg+xml;utf8,' +
+       encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="400" height="140"><rect width="100%" height="100%" fill="#f1f1f1"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-size="14" fill="#999">이미지를 불러올 수 없습니다</text></svg>');
+
+     img.src = resolved || FALLBACK;
+
+     // 실패해도 숨기지 말고 대체 이미지로 교체
+     img.onerror = () => { img.onerror = null; img.src = FALLBACK; };
+
+     // 성공하면 표시 유지(숨김 제거만 처리)
+     img.onload  = () => img.classList.remove('hidden');
+
+     li.appendChild(img);
 
       // 메타
       const meta = document.createElement('div');
