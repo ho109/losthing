@@ -9,10 +9,15 @@ import {
 // 2) 이미지 경로 정규화
 function toSrc(u) {
   if (!u) return '';
-  if (u.startsWith('data:') || u.startsWith('http://') || u.startsWith('https://')) return u;
-  if (u.startsWith('/')) return `${API}${u}`;
+  if (u.startsWith('data:') || u.startsWith('http://') || u.startsWith('https://')) return u; // 절대/데이터 URL은 그대로
+  if (u.startsWith('/')) return `${API}${u}`; // /uploads/... 는 API 붙이기
   return u;
 }
+
+img.src = toSrc(it.imageUrl);          // 목록
+detailImage.src = toSrc(it.imageUrl);  // 상세
+preview.src = toSrc(prefill.imageUrl); // 수정 프리뷰
+
 
 // ---- 상태 ----
 let selectedFloor = 0;   // 0 = 전체
