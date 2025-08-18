@@ -1,21 +1,21 @@
-// app.js (최신 전체본)
+// app.js (관리자 강제 삭제/리스트 즉시 삭제 포함 전체본)
 
-// 1) API 모듈 임포트는 파일 최상단
+// 1) API 임포트 (최상단)
 import {
   API, login, getToken, clearToken,
   listItems, getItem, createItem, updateItem, deleteItem
 } from './api.js';
 
-// 2) 이미지 경로 정규화 유틸
+// 2) 이미지 경로 정규화
 function toSrc(u) {
   if (!u) return '';
-  if (u.startsWith('data:') || u.startsWith('http://') || u.startsWith('https://')) return u;
-  if (u.startsWith('/')) return `${API}${u}`;
+  if (u.startsWith('data:') || u.startsWith('http://') || u.startsWith('https://')) return u; // 절대/데이터 URL은 그대로
+  if (u.startsWith('/')) return `${API}${u}`; // /uploads/... 는 API 붙이기
   return u;
 }
 
 // ---- 상태 ----
-let selectedFloor = 0;   // 0=전체, 1~4=층
+let selectedFloor = 0;   // 0 = 전체
 let editing = null;      // { id, floor } | null
 
 // ---- 유틸 ----
@@ -42,6 +42,7 @@ async function safeDelete(id) {
   try {
     await deleteItem(id);
     alert('삭제되었습니다.');
+    // 상세 화면에서 왔다면 목록으로
     showScreen('screen-2');
     await renderList();
   } catch (e) {
@@ -67,7 +68,7 @@ function mountLogin() {
     const pw = (pwEl?.value || '').trim();
     if (!id || !pw) return alert('아이디/비밀번호를 입력하세요.');
     try {
-      await login(id, pw); // 예: a / b
+      await login(id, pw); // a / b
       alert('관리자 로그인 성공');
       goList();
     } catch (e) {
@@ -94,7 +95,7 @@ async function renderList() {
       const li = document.createElement('li');
       li.className = 'card';
       li.dataset.id = it.id;
-      li.style.position = 'relative';
+      li.style.position = 'relative'; // 관리자 삭제 버튼 배치용
 
       // 이미지
       const img = document.createElement('img');
@@ -137,7 +138,7 @@ async function renderList() {
           fontSize: '12px'
         });
         delBtn.addEventListener('click', async (e) => {
-          e.stopPropagation();
+          e.stopPropagation(); // 상세 열림 방지
           if (!confirm('이 항목을 삭제하시겠습니까?')) return;
           await safeDelete(it.id);
         });
@@ -168,6 +169,7 @@ function mountList() {
   $('#search-input')?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') renderList();
   });
+
   // 글쓰기 FAB
   $('#fab-manage')?.addEventListener('click', () => openCompose(null));
 }
@@ -202,7 +204,7 @@ async function openDetail(id) {
     };
   } catch (e) {
     console.error(e);
-    // 상세 실패 시에도 관리자 강제 삭제 제공
+    // ✅ 상세가 깨져도 관리자라면 강제 삭제 가능
     if (isAdmin() && confirm('상세를 불러오지 못했습니다. 이 항목을 강제로 삭제할까요?')) {
       await safeDelete(id);
       return;

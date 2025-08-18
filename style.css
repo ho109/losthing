@@ -89,9 +89,3 @@ body { margin:0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Rob
 .image-popup { display:none; position:fixed; inset:0; background:rgba(0,0,0,.8); justify-content:center; align-items:center; z-index:999; }
 .image-popup img { max-width:90vw; max-height:80vh; border:3px solid #fff; border-radius:8px; }
 .image-close { position:absolute; top:18px; right:24px; color:#fff; font-size:40px; cursor:pointer; }
-.card-img {
-  width: 100%;
-  height: 180px;        /* 또는 aspect-ratio: 4 / 3; */
-  object-fit: cover;
-  background: #f6f6f6;  /* 로딩/에러시 회색 배경 */
-}
