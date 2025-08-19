@@ -2,7 +2,7 @@
 export const API =
   location.hostname === 'localhost' || location.hostname === '127.0.0.1'
     ? 'http://127.0.0.1:4000'          // 개발용 로컬
-    : 'https://lostfound-backend-0js6.onrender.com/'; // 배포된 백엔드 URL로 교체
+    : 'https://lostfound-backend-0js6.onrender.com'; // 배포된 백엔드 URL로 교체
 
 // 토큰 저장/가져오기
 const tokenKey = 'lf_token';
