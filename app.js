@@ -1,29 +1,30 @@
-// app.js — Data URL 업로드 + 이미지 대체 처리 (전체 교체본)
+// app.js — Data URL 업로드 + 이미지 대체 + 로컬 캐시 (전체 교체본)
 
-/* 1) API 임포트 */
 import {
   API, login, getToken, clearToken,
   listItems, getItem, createItem, updateItem, deleteItem
 } from './api.js';
 
-/* 2) 이미지 경로 정규화 */
+// 이미지 경로 정규화
 function toSrc(u) {
   if (!u) return '';
-  if (u.startsWith('data:') || u.startsWith('http://') || u.startsWith('https://')) return u; // 절대/데이터 URL 그대로
-  if (u.startsWith('/')) return `${API}${u}`; // /uploads/... 는 API 붙이기
+  if (u.startsWith('data:') || u.startsWith('http://') || u.startsWith('https://')) return u;
+  if (u.startsWith('/')) return `${API}${u}`;
   return u;
 }
 
-/* 공용 대체 이미지 (자리 유지용) */
+// 자리 유지용 대체 이미지
 const FALLBACK_DATA_URL =
   'data:image/svg+xml;utf8,' +
   encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="800" height="450"><rect width="100%" height="100%" fill="#f1f1f1"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-size="16" fill="#999">이미지를 불러올 수 없습니다</text></svg>');
 
-/* ---- 상태 ---- */
+// ===== 상태 =====
 let selectedFloor = 0;   // 0 = 전체
 let editing = null;      // { id, floor } | null
+// ★ 서버가 아직 imageUrl을 저장/반환하지 않아도 방금 등록한 이미지를 보여주기 위한 임시 캐시
+const pendingImageById = new Map();
 
-/* ---- 유틸 ---- */
+// ===== 유틸 =====
 const $ = (s) => document.querySelector(s);
 
 function showScreen(id) {
@@ -42,27 +43,25 @@ function syncRoleUI() {
   $('#btn-delete')?.classList.toggle('hidden', !isAdmin());
 }
 
-/* 파일 → DataURL (압축) */
-async function fileToDataURL(file, { maxW = 1200, maxH = 1200, quality = 0.8 } = {}) {
-  // createImageBitmap이 더 빠르고 EXIF 무시 회전 이슈 적음
+// 파일 → DataURL (압축)
+async function fileToDataURL(file, { maxW = 1280, maxH = 1280, quality = 0.8 } = {}) {
   const bmp = await createImageBitmap(file);
-  let { width, height } = bmp;
-  const scale = Math.min(maxW / width, maxH / height, 1);
-  const w = Math.round(width * scale);
-  const h = Math.round(height * scale);
-
+  const scale = Math.min(maxW / bmp.width, maxH / bmp.height, 1);
+  const w = Math.round(bmp.width * scale);
+  const h = Math.round(bmp.height * scale);
   const canvas = document.createElement('canvas');
   canvas.width = w; canvas.height = h;
   const ctx = canvas.getContext('2d', { alpha: false });
   ctx.drawImage(bmp, 0, 0, w, h);
-
-  return canvas.toDataURL('image/jpeg', quality); // "data:image/jpeg;base64,..."
+  return canvas.toDataURL('image/jpeg', quality);
 }
 
-/* 공통: 안전 삭제 */
+// 공통: 안전 삭제
 async function safeDelete(id) {
   try {
     await deleteItem(id);
+    // 캐시에 남아있던 임시 이미지도 제거
+    pendingImageById.delete(id);
     alert('삭제되었습니다.');
     showScreen('screen-2');
     await renderList();
@@ -72,7 +71,7 @@ async function safeDelete(id) {
   }
 }
 
-/* ========================= 로그인 ========================= */
+// ========================= 로그인 =========================
 function mountLogin() {
   const idEl = $('#admin-id');
   const pwEl = $('#admin-pw');
@@ -104,7 +103,7 @@ function mountLogin() {
   });
 }
 
-/* ========================= 목록/검색 ========================= */
+// ========================= 목록/검색 =========================
 async function renderList() {
   try {
     const q = ($('#search-input')?.value || '').trim();
@@ -113,17 +112,21 @@ async function renderList() {
     ul.innerHTML = '';
 
     items.forEach(it => {
+      // ★ 서버에 imageUrl이 없으면, 직전에 우리가 올린 임시 캐시를 우선 사용
+      if (!it.imageUrl && pendingImageById.has(it.id)) {
+        it.imageUrl = pendingImageById.get(it.id);
+      }
+
       const li = document.createElement('li');
       li.className = 'card';
       li.dataset.id = it.id;
       li.style.position = 'relative';
 
-      // 이미지 (자리를 유지하고 실패 시 대체 이미지로 교체)
+      // 이미지
       const img = document.createElement('img');
       img.className = 'card-img';
       img.alt = it.title || '이미지';
       img.loading = 'lazy';
-
       const resolved = toSrc(it.imageUrl || '');
       img.src = resolved || FALLBACK_DATA_URL;
       img.onerror = () => { img.onerror = null; img.src = FALLBACK_DATA_URL; };
@@ -180,7 +183,6 @@ async function renderList() {
 }
 
 function mountList() {
-  // 탭
   for (let i = 0; i <= 4; i++) {
     document.getElementById(`tab-${i}`)?.addEventListener('click', () => {
       selectedFloor = i;
@@ -188,20 +190,23 @@ function mountList() {
       renderList();
     });
   }
-  // 검색
   $('.search-btn')?.addEventListener('click', renderList);
   $('#search-input')?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') renderList();
   });
-
-  // 글쓰기 FAB
   $('#fab-manage')?.addEventListener('click', () => openCompose(null));
 }
 
-/* ========================= 상세 ========================= */
+// ========================= 상세 =========================
 async function openDetail(id) {
   try {
     const it = await getItem(id);
+
+    // ★ 상세에서도 서버 imageUrl이 없으면 임시 캐시 사용
+    if (!it.imageUrl && pendingImageById.has(it.id)) {
+      it.imageUrl = pendingImageById.get(it.id);
+    }
+
     $('#detail-title').textContent = it.title || '(제목 없음)';
     $('#detail-floor').textContent = `보관 위치 : ${it.floor}층`;
 
@@ -209,19 +214,17 @@ async function openDetail(id) {
     const resolved = toSrc(it.imageUrl || '');
     if (resolved) {
       img.src = resolved;
-      img.classList.remove('hidden');
-      img.onerror = () => { img.onerror = null; img.src = FALLBACK_DATA_URL; };
     } else {
-      img.src = FALLBACK_DATA_URL; // 이미지가 없어도 자리 유지
-      img.classList.remove('hidden');
+      img.src = FALLBACK_DATA_URL;
     }
+    img.classList.remove('hidden');
+    img.onerror = () => { img.onerror = null; img.src = FALLBACK_DATA_URL; };
 
     $('#detail-desc').textContent = it.desc || '';
 
     syncRoleUI();
     showScreen('screen-4');
 
-    // 편집/삭제 핸들러
     $('#btn-edit').onclick = () =>
       openCompose({ id: it.id, floor: it.floor, title: it.title, desc: it.desc, imageUrl: it.imageUrl });
 
@@ -243,7 +246,7 @@ function mountDetailNav() {
   $('#btn-back-detail')?.addEventListener('click', () => showScreen('screen-2'));
 }
 
-/* ========================= 글쓰기/수정 ========================= */
+// ========================= 글쓰기/수정 =========================
 function openCompose(prefill) {
   if (!isAdmin()) { alert('관리자만 작성할 수 있습니다.'); return; }
   editing = prefill ? { id: prefill.id, floor: prefill.floor } : null;
@@ -277,14 +280,18 @@ async function submitCompose() {
   if (![1, 2, 3, 4].includes(floor)) return alert('보관 위치(층)를 선택하세요.');
 
   try {
-    // 파일이 있으면 Data URL로 변환해서 서버에 imageUrl(문자열)로 보냄
+    // 파일이 있으면 Data URL로 변환 → 서버에 imageUrl(문자열)로 보냄
     let imageUrl = null;
-    if (file) imageUrl = await fileToDataURL(file, { maxW: 1280, maxH: 1280, quality: 0.8 });
+    if (file) imageUrl = await fileToDataURL(file);
 
     if (editing) {
-      await updateItem(editing.id, { title, floor, desc, imageUrl }); // file 대신 imageUrl 우선
+      await updateItem(editing.id, { title, floor, desc, imageUrl });
+      // ★ 서버가 아직 imageUrl 저장을 안 해도 즉시 보이게 로컬 캐시
+      if (imageUrl) pendingImageById.set(editing.id, imageUrl);
     } else {
-      await createItem({ title, floor, desc, imageUrl });
+      const res = await createItem({ title, floor, desc, imageUrl });
+      // ★ 새로 받은 id에 대해 로컬 캐시(서버가 imageUrl을 못 돌려줘도 UI에 즉시 반영)
+      if (res?.id && imageUrl) pendingImageById.set(res.id, imageUrl);
     }
 
     // reset
@@ -303,7 +310,7 @@ async function submitCompose() {
 }
 
 function mountCompose() {
-  // 이미지 미리보기 (원본 미리보기)
+  // 이미지 미리보기
   $('#form-image')?.addEventListener('change', () => {
     const f = $('#form-image').files[0];
     const pv = $('#form-preview');
@@ -317,14 +324,13 @@ function mountCompose() {
   $('#btn-back-2')?.addEventListener('click', () => showScreen('screen-2'));
 }
 
-/* ========================= 부트스트랩 ========================= */
+// ========================= 부트스트랩 =========================
 window.addEventListener('load', () => {
   mountLogin();
   mountList();
   mountCompose();
   mountDetailNav();
 
-  // 첫 화면은 로그인
   showScreen('screen-1');
   syncRoleUI();
 });
