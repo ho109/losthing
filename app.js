@@ -1,30 +1,24 @@
-// app.js — Data URL 업로드 + 이미지 대체 + 로컬 캐시 (전체 교체본)
+// app.js (관리자 강제 삭제/리스트 즉시 삭제 포함 전체본)
 
+// 1) API 임포트 (최상단)
 import {
   API, login, getToken, clearToken,
   listItems, getItem, createItem, updateItem, deleteItem
 } from './api.js';
 
-// 이미지 경로 정규화
+// 2) 이미지 경로 정규화
 function toSrc(u) {
   if (!u) return '';
-  if (u.startsWith('data:') || u.startsWith('http://') || u.startsWith('https://')) return u;
-  if (u.startsWith('/')) return `${API}${u}`;
+  if (u.startsWith('data:') || u.startsWith('http://') || u.startsWith('https://')) return u; // 절대/데이터 URL은 그대로
+  if (u.startsWith('/')) return `${API}${u}`; // /uploads/... 는 API 붙이기
   return u;
 }
 
-// 자리 유지용 대체 이미지
-const FALLBACK_DATA_URL =
-  'data:image/svg+xml;utf8,' +
-  encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="800" height="450"><rect width="100%" height="100%" fill="#f1f1f1"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-size="16" fill="#999">이미지를 불러올 수 없습니다</text></svg>');
-
-// ===== 상태 =====
+// ---- 상태 ----
 let selectedFloor = 0;   // 0 = 전체
 let editing = null;      // { id, floor } | null
-// ★ 서버가 아직 imageUrl을 저장/반환하지 않아도 방금 등록한 이미지를 보여주기 위한 임시 캐시
-const pendingImageById = new Map();
 
-// ===== 유틸 =====
+// ---- 유틸 ----
 const $ = (s) => document.querySelector(s);
 
 function showScreen(id) {
@@ -43,26 +37,12 @@ function syncRoleUI() {
   $('#btn-delete')?.classList.toggle('hidden', !isAdmin());
 }
 
-// 파일 → DataURL (압축)
-async function fileToDataURL(file, { maxW = 1280, maxH = 1280, quality = 0.8 } = {}) {
-  const bmp = await createImageBitmap(file);
-  const scale = Math.min(maxW / bmp.width, maxH / bmp.height, 1);
-  const w = Math.round(bmp.width * scale);
-  const h = Math.round(bmp.height * scale);
-  const canvas = document.createElement('canvas');
-  canvas.width = w; canvas.height = h;
-  const ctx = canvas.getContext('2d', { alpha: false });
-  ctx.drawImage(bmp, 0, 0, w, h);
-  return canvas.toDataURL('image/jpeg', quality);
-}
-
-// 공통: 안전 삭제
+// 공통: 안전 삭제 핸들러
 async function safeDelete(id) {
   try {
     await deleteItem(id);
-    // 캐시에 남아있던 임시 이미지도 제거
-    pendingImageById.delete(id);
     alert('삭제되었습니다.');
+    // 상세 화면에서 왔다면 목록으로
     showScreen('screen-2');
     await renderList();
   } catch (e) {
@@ -88,7 +68,7 @@ function mountLogin() {
     const pw = (pwEl?.value || '').trim();
     if (!id || !pw) return alert('아이디/비밀번호를 입력하세요.');
     try {
-      await login(id, pw);
+      await login(id, pw); // a / b
       alert('관리자 로그인 성공');
       goList();
     } catch (e) {
@@ -112,26 +92,33 @@ async function renderList() {
     ul.innerHTML = '';
 
     items.forEach(it => {
-      // ★ 서버에 imageUrl이 없으면, 직전에 우리가 올린 임시 캐시를 우선 사용
-      if (!it.imageUrl && pendingImageById.has(it.id)) {
-        it.imageUrl = pendingImageById.get(it.id);
-      }
-
       const li = document.createElement('li');
       li.className = 'card';
       li.dataset.id = it.id;
-      li.style.position = 'relative';
+      li.style.position = 'relative'; // 관리자 삭제 버튼 배치용
 
       // 이미지
       const img = document.createElement('img');
       img.className = 'card-img';
       img.alt = it.title || '이미지';
-      img.loading = 'lazy';
+
+      // 절대/상대 URL 정규화
       const resolved = toSrc(it.imageUrl || '');
-      img.src = resolved || FALLBACK_DATA_URL;
-      img.onerror = () => { img.onerror = null; img.src = FALLBACK_DATA_URL; };
-      img.onload  = () => img.classList.remove('hidden');
-      li.appendChild(img);
+
+      // 기본/대체 이미지 (회색 박스 유지)
+      const FALLBACK =
+      'data:image/svg+xml;utf8,' +
+       encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="400" height="140"><rect width="100%" height="100%" fill="#f1f1f1"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-size="14" fill="#999">이미지를 불러올 수 없습니다</text></svg>');
+
+     img.src = resolved || FALLBACK;
+
+     // 실패해도 숨기지 말고 대체 이미지로 교체
+     img.onerror = () => { img.onerror = null; img.src = FALLBACK; };
+
+     // 성공하면 표시 유지(숨김 제거만 처리)
+     img.onload  = () => img.classList.remove('hidden');
+
+     li.appendChild(img);
 
       // 메타
       const meta = document.createElement('div');
@@ -165,7 +152,7 @@ async function renderList() {
           fontSize: '12px'
         });
         delBtn.addEventListener('click', async (e) => {
-          e.stopPropagation();
+          e.stopPropagation(); // 상세 열림 방지
           if (!confirm('이 항목을 삭제하시겠습니까?')) return;
           await safeDelete(it.id);
         });
@@ -183,6 +170,7 @@ async function renderList() {
 }
 
 function mountList() {
+  // 탭
   for (let i = 0; i <= 4; i++) {
     document.getElementById(`tab-${i}`)?.addEventListener('click', () => {
       selectedFloor = i;
@@ -190,10 +178,13 @@ function mountList() {
       renderList();
     });
   }
+  // 검색
   $('.search-btn')?.addEventListener('click', renderList);
   $('#search-input')?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') renderList();
   });
+
+  // 글쓰기 FAB
   $('#fab-manage')?.addEventListener('click', () => openCompose(null));
 }
 
@@ -201,30 +192,23 @@ function mountList() {
 async function openDetail(id) {
   try {
     const it = await getItem(id);
-
-    // ★ 상세에서도 서버 imageUrl이 없으면 임시 캐시 사용
-    if (!it.imageUrl && pendingImageById.has(it.id)) {
-      it.imageUrl = pendingImageById.get(it.id);
-    }
-
     $('#detail-title').textContent = it.title || '(제목 없음)';
     $('#detail-floor').textContent = `보관 위치 : ${it.floor}층`;
 
     const img = $('#detail-image');
-    const resolved = toSrc(it.imageUrl || '');
-    if (resolved) {
-      img.src = resolved;
+    if (it.imageUrl) {
+      img.src = toSrc(it.imageUrl);
+      img.classList.remove('hidden');
+      img.onerror = () => img.classList.add('hidden');
     } else {
-      img.src = FALLBACK_DATA_URL;
+      img.classList.add('hidden');
     }
-    img.classList.remove('hidden');
-    img.onerror = () => { img.onerror = null; img.src = FALLBACK_DATA_URL; };
-
     $('#detail-desc').textContent = it.desc || '';
 
     syncRoleUI();
     showScreen('screen-4');
 
+    // 편집/삭제 핸들러
     $('#btn-edit').onclick = () =>
       openCompose({ id: it.id, floor: it.floor, title: it.title, desc: it.desc, imageUrl: it.imageUrl });
 
@@ -234,6 +218,7 @@ async function openDetail(id) {
     };
   } catch (e) {
     console.error(e);
+    // ✅ 상세가 깨져도 관리자라면 강제 삭제 가능
     if (isAdmin() && confirm('상세를 불러오지 못했습니다. 이 항목을 강제로 삭제할까요?')) {
       await safeDelete(id);
       return;
@@ -280,20 +265,11 @@ async function submitCompose() {
   if (![1, 2, 3, 4].includes(floor)) return alert('보관 위치(층)를 선택하세요.');
 
   try {
-    // 파일이 있으면 Data URL로 변환 → 서버에 imageUrl(문자열)로 보냄
-    let imageUrl = null;
-    if (file) imageUrl = await fileToDataURL(file);
-
     if (editing) {
-      await updateItem(editing.id, { title, floor, desc, imageUrl });
-      // ★ 서버가 아직 imageUrl 저장을 안 해도 즉시 보이게 로컬 캐시
-      if (imageUrl) pendingImageById.set(editing.id, imageUrl);
+      await updateItem(editing.id, { title, floor, desc, file });
     } else {
-      const res = await createItem({ title, floor, desc, imageUrl });
-      // ★ 새로 받은 id에 대해 로컬 캐시(서버가 imageUrl을 못 돌려줘도 UI에 즉시 반영)
-      if (res?.id && imageUrl) pendingImageById.set(res.id, imageUrl);
+      await createItem({ title, floor, desc, file });
     }
-
     // reset
     $('#form-title').value = '';
     $('#form-floor').value = '';
@@ -331,6 +307,7 @@ window.addEventListener('load', () => {
   mountCompose();
   mountDetailNav();
 
+  // 첫 화면은 로그인
   showScreen('screen-1');
   syncRoleUI();
 });
