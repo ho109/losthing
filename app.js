@@ -1,24 +1,29 @@
-// app.js (관리자 강제 삭제/리스트 즉시 삭제 포함 전체본)
+// app.js — Data URL 업로드 + 이미지 대체 처리 (전체 교체본)
 
-// 1) API 임포트 (최상단)
+/* 1) API 임포트 */
 import {
   API, login, getToken, clearToken,
   listItems, getItem, createItem, updateItem, deleteItem
 } from './api.js';
 
-// 2) 이미지 경로 정규화
+/* 2) 이미지 경로 정규화 */
 function toSrc(u) {
   if (!u) return '';
-  if (u.startsWith('data:') || u.startsWith('http://') || u.startsWith('https://')) return u; // 절대/데이터 URL은 그대로
+  if (u.startsWith('data:') || u.startsWith('http://') || u.startsWith('https://')) return u; // 절대/데이터 URL 그대로
   if (u.startsWith('/')) return `${API}${u}`; // /uploads/... 는 API 붙이기
   return u;
 }
 
-// ---- 상태 ----
+/* 공용 대체 이미지 (자리 유지용) */
+const FALLBACK_DATA_URL =
+  'data:image/svg+xml;utf8,' +
+  encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="800" height="450"><rect width="100%" height="100%" fill="#f1f1f1"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-size="16" fill="#999">이미지를 불러올 수 없습니다</text></svg>');
+
+/* ---- 상태 ---- */
 let selectedFloor = 0;   // 0 = 전체
 let editing = null;      // { id, floor } | null
 
-// ---- 유틸 ----
+/* ---- 유틸 ---- */
 const $ = (s) => document.querySelector(s);
 
 function showScreen(id) {
@@ -37,12 +42,28 @@ function syncRoleUI() {
   $('#btn-delete')?.classList.toggle('hidden', !isAdmin());
 }
 
-// 공통: 안전 삭제 핸들러
+/* 파일 → DataURL (압축) */
+async function fileToDataURL(file, { maxW = 1200, maxH = 1200, quality = 0.8 } = {}) {
+  // createImageBitmap이 더 빠르고 EXIF 무시 회전 이슈 적음
+  const bmp = await createImageBitmap(file);
+  let { width, height } = bmp;
+  const scale = Math.min(maxW / width, maxH / height, 1);
+  const w = Math.round(width * scale);
+  const h = Math.round(height * scale);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d', { alpha: false });
+  ctx.drawImage(bmp, 0, 0, w, h);
+
+  return canvas.toDataURL('image/jpeg', quality); // "data:image/jpeg;base64,..."
+}
+
+/* 공통: 안전 삭제 */
 async function safeDelete(id) {
   try {
     await deleteItem(id);
     alert('삭제되었습니다.');
-    // 상세 화면에서 왔다면 목록으로
     showScreen('screen-2');
     await renderList();
   } catch (e) {
@@ -51,7 +72,7 @@ async function safeDelete(id) {
   }
 }
 
-// ========================= 로그인 =========================
+/* ========================= 로그인 ========================= */
 function mountLogin() {
   const idEl = $('#admin-id');
   const pwEl = $('#admin-pw');
@@ -68,7 +89,7 @@ function mountLogin() {
     const pw = (pwEl?.value || '').trim();
     if (!id || !pw) return alert('아이디/비밀번호를 입력하세요.');
     try {
-      await login(id, pw); // a / b
+      await login(id, pw);
       alert('관리자 로그인 성공');
       goList();
     } catch (e) {
@@ -83,7 +104,7 @@ function mountLogin() {
   });
 }
 
-// ========================= 목록/검색 =========================
+/* ========================= 목록/검색 ========================= */
 async function renderList() {
   try {
     const q = ($('#search-input')?.value || '').trim();
@@ -95,30 +116,19 @@ async function renderList() {
       const li = document.createElement('li');
       li.className = 'card';
       li.dataset.id = it.id;
-      li.style.position = 'relative'; // 관리자 삭제 버튼 배치용
+      li.style.position = 'relative';
 
-      // 이미지
+      // 이미지 (자리를 유지하고 실패 시 대체 이미지로 교체)
       const img = document.createElement('img');
       img.className = 'card-img';
       img.alt = it.title || '이미지';
+      img.loading = 'lazy';
 
-      // 절대/상대 URL 정규화
       const resolved = toSrc(it.imageUrl || '');
-
-      // 기본/대체 이미지 (회색 박스 유지)
-      const FALLBACK =
-      'data:image/svg+xml;utf8,' +
-       encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="400" height="140"><rect width="100%" height="100%" fill="#f1f1f1"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-size="14" fill="#999">이미지를 불러올 수 없습니다</text></svg>');
-
-     img.src = resolved || FALLBACK;
-
-     // 실패해도 숨기지 말고 대체 이미지로 교체
-     img.onerror = () => { img.onerror = null; img.src = FALLBACK; };
-
-     // 성공하면 표시 유지(숨김 제거만 처리)
-     img.onload  = () => img.classList.remove('hidden');
-
-     li.appendChild(img);
+      img.src = resolved || FALLBACK_DATA_URL;
+      img.onerror = () => { img.onerror = null; img.src = FALLBACK_DATA_URL; };
+      img.onload  = () => img.classList.remove('hidden');
+      li.appendChild(img);
 
       // 메타
       const meta = document.createElement('div');
@@ -152,7 +162,7 @@ async function renderList() {
           fontSize: '12px'
         });
         delBtn.addEventListener('click', async (e) => {
-          e.stopPropagation(); // 상세 열림 방지
+          e.stopPropagation();
           if (!confirm('이 항목을 삭제하시겠습니까?')) return;
           await safeDelete(it.id);
         });
@@ -188,7 +198,7 @@ function mountList() {
   $('#fab-manage')?.addEventListener('click', () => openCompose(null));
 }
 
-// ========================= 상세 =========================
+/* ========================= 상세 ========================= */
 async function openDetail(id) {
   try {
     const it = await getItem(id);
@@ -196,13 +206,16 @@ async function openDetail(id) {
     $('#detail-floor').textContent = `보관 위치 : ${it.floor}층`;
 
     const img = $('#detail-image');
-    if (it.imageUrl) {
-      img.src = toSrc(it.imageUrl);
+    const resolved = toSrc(it.imageUrl || '');
+    if (resolved) {
+      img.src = resolved;
       img.classList.remove('hidden');
-      img.onerror = () => img.classList.add('hidden');
+      img.onerror = () => { img.onerror = null; img.src = FALLBACK_DATA_URL; };
     } else {
-      img.classList.add('hidden');
+      img.src = FALLBACK_DATA_URL; // 이미지가 없어도 자리 유지
+      img.classList.remove('hidden');
     }
+
     $('#detail-desc').textContent = it.desc || '';
 
     syncRoleUI();
@@ -218,7 +231,6 @@ async function openDetail(id) {
     };
   } catch (e) {
     console.error(e);
-    // ✅ 상세가 깨져도 관리자라면 강제 삭제 가능
     if (isAdmin() && confirm('상세를 불러오지 못했습니다. 이 항목을 강제로 삭제할까요?')) {
       await safeDelete(id);
       return;
@@ -231,7 +243,7 @@ function mountDetailNav() {
   $('#btn-back-detail')?.addEventListener('click', () => showScreen('screen-2'));
 }
 
-// ========================= 글쓰기/수정 =========================
+/* ========================= 글쓰기/수정 ========================= */
 function openCompose(prefill) {
   if (!isAdmin()) { alert('관리자만 작성할 수 있습니다.'); return; }
   editing = prefill ? { id: prefill.id, floor: prefill.floor } : null;
@@ -265,11 +277,16 @@ async function submitCompose() {
   if (![1, 2, 3, 4].includes(floor)) return alert('보관 위치(층)를 선택하세요.');
 
   try {
+    // 파일이 있으면 Data URL로 변환해서 서버에 imageUrl(문자열)로 보냄
+    let imageUrl = null;
+    if (file) imageUrl = await fileToDataURL(file, { maxW: 1280, maxH: 1280, quality: 0.8 });
+
     if (editing) {
-      await updateItem(editing.id, { title, floor, desc, file });
+      await updateItem(editing.id, { title, floor, desc, imageUrl }); // file 대신 imageUrl 우선
     } else {
-      await createItem({ title, floor, desc, file });
+      await createItem({ title, floor, desc, imageUrl });
     }
+
     // reset
     $('#form-title').value = '';
     $('#form-floor').value = '';
@@ -286,7 +303,7 @@ async function submitCompose() {
 }
 
 function mountCompose() {
-  // 이미지 미리보기
+  // 이미지 미리보기 (원본 미리보기)
   $('#form-image')?.addEventListener('change', () => {
     const f = $('#form-image').files[0];
     const pv = $('#form-preview');
@@ -300,7 +317,7 @@ function mountCompose() {
   $('#btn-back-2')?.addEventListener('click', () => showScreen('screen-2'));
 }
 
-// ========================= 부트스트랩 =========================
+/* ========================= 부트스트랩 ========================= */
 window.addEventListener('load', () => {
   mountLogin();
   mountList();
