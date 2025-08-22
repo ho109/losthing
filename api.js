@@ -13,13 +13,12 @@ export const setToken   = (t) => localStorage.setItem(tokenKey, t);
 export const clearToken = () => localStorage.removeItem(tokenKey);
 const authHeader = () => (getToken() ? { Authorization: `Bearer ${getToken()}` } : {});
 
-// 공통 응답 핸들러
+// ===== 공통 응답 핸들러 =====
 async function handle(r) {
   if (r.ok) {
     const ct = r.headers.get('content-type') || '';
     return ct.includes('application/json') ? r.json() : r.text();
   }
-  // 에러 본문 최대한 추출
   try {
     const j = await r.json();
     throw new Error(j?.error || j?.message || r.statusText);
@@ -47,7 +46,8 @@ export async function listItems({ floor = 0, q = '' } = {}) {
   const p = new URLSearchParams();
   if (floor) p.set('floor', floor);
   if (q)     p.set('q', q);
-  const r = await fetch(`${API}/api/items?${p.toString()}`);
+  const qs = p.toString();
+  const r = await fetch(qs ? `${API}/api/items?${qs}` : `${API}/api/items`);
   const data = await handle(r);
   return data.items || [];
 }
@@ -57,21 +57,54 @@ export async function getItem(id) {
   return handle(r);
 }
 
-export async function createItem({ title, floor, desc, file }) {
-  const fd = new FormData();
-  fd.append('title', title);
-  fd.append('floor', floor);
-  if (desc) fd.append('desc', desc);
-  if (file) fd.append('image', file);
+export async function createItem({ title, floor, desc, file, imageDataURL }) {
+  // JSON 경로(추천): 리사이즈된 dataURL 전송
+  if (imageDataURL && !file) {
+    const r = await fetch(`${API}/api/items`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify({ title, floor, desc, image: imageDataURL })
+    });
+    return handle(r); // { id }
+  }
+
+  // (옵션) 파일 경로 유지하고 싶다면
+  if (file) {
+    const fd = new FormData();
+    fd.append('title', title);
+    fd.append('floor', floor);
+    if (desc) fd.append('desc', desc);
+    fd.append('image', file);
+    const r = await fetch(`${API}/api/items`, {
+      method: 'POST',
+      headers: { ...authHeader() }, // FormData는 Content-Type 자동
+      body: fd
+    });
+    return handle(r);
+  }
+
+  // 이미지 없이 텍스트만
   const r = await fetch(`${API}/api/items`, {
     method: 'POST',
-    headers: { ...authHeader() }, // FormData는 Content-Type 자동
-    body: fd
+    headers: { 'Content-Type': 'application/json', ...authHeader() },
+    body: JSON.stringify({ title, floor, desc })
   });
-  return handle(r); // { id }
+  return handle(r);
 }
 
-export async function updateItem(id, { title, floor, desc, file }) {
+export async function updateItem(id, { title, floor, desc, file, imageDataURL }) {
+  // JSON 경로(추천): 리사이즈된 dataURL 전송
+  if (imageDataURL && !file) {
+    const r = await fetch(`${API}/api/items/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify({ title, floor, desc, image: imageDataURL })
+    });
+    await handle(r);
+    return;
+  }
+
+  // (옵션) 파일 경로
   if (file) {
     const fd = new FormData();
     if (title != null) fd.append('title', title);
@@ -86,6 +119,8 @@ export async function updateItem(id, { title, floor, desc, file }) {
     await handle(r);
     return;
   }
+
+  // 텍스트만 수정
   const r = await fetch(`${API}/api/items/${encodeURIComponent(id)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', ...authHeader() },
@@ -94,16 +129,16 @@ export async function updateItem(id, { title, floor, desc, file }) {
   await handle(r);
 }
 
-export async function deleteItem(id) {
-  const r = await fetch(`${API}/api/items/${encodeURIComponent(id)}`, {
-    method: 'DELETE',
-    headers: { ...authHeader() }
-  });
-  await handle(r);
-}
-
-// (선택) 핑/헬스체크
+// (선택) 핑
 export async function ping() {
   const r = await fetch(`${API}/`);
   return handle(r);
 }
+
+async function fetchWithTimeout(url, opts = {}, ms = 15000) {
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), ms);
+  try { return await fetch(url, { ...opts, signal: ac.signal }); }
+  finally { clearTimeout(t); }
+}
+// 사용 예: const r = await fetchWithTimeout(`${API}/api/items?...`);
