@@ -1,12 +1,71 @@
-// app.js (수정본)
+// app.js — 최종본
 
-// 1) API 모듈
 import {
   API, login, getToken, clearToken,
   listItems, getItem, createItem, updateItem, deleteItem
 } from './api.js';
 
-// 2) 이미지 경로 정규화
+/* ========= 이미지 유틸 (200KB 목표, WebP 우선) ========= */
+async function resizeImageFile(file, {
+  maxW = 1024,
+  maxH = 1024,
+  quality = 0.82,
+  minQuality = 0.45,
+  targetBytes = 200 * 1024,
+  downscaleStep = 0.85,
+  minW = 640,
+  minH = 640,
+  formatPriority = ['image/webp', 'image/jpeg'],
+} = {}) {
+  if (!file) return null;
+
+  const img = new Image();
+  const url = URL.createObjectURL(file);
+  await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = url; });
+  URL.revokeObjectURL(url);
+
+  const s0 = Math.min(1, maxW / img.naturalWidth, maxH / img.naturalHeight);
+  let w = Math.max(1, Math.round(img.naturalWidth * s0));
+  let h = Math.max(1, Math.round(img.naturalHeight * s0));
+
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  const bytesOf = (d) => Math.ceil((d.split(',')[1] || '').length * 3 / 4);
+
+  const tryEncode = (fmt, q) => {
+    canvas.width = w; canvas.height = h;
+    ctx.clearRect(0, 0, w, h);
+    ctx.drawImage(img, 0, 0, w, h);
+    let dataURL = canvas.toDataURL(fmt, q);
+    if (fmt === 'image/webp' && !dataURL.startsWith('data:image/webp')) return null;
+    return dataURL;
+  };
+
+  let q = quality;
+  for (let tries = 0; tries < 10; tries++) {
+    let best = { dataURL: null, bytes: Infinity };
+    for (const fmt of formatPriority) {
+      const d = tryEncode(fmt, q);
+      if (!d) continue;
+      const b = bytesOf(d);
+      if (b < best.bytes) best = { dataURL: d, bytes: b };
+    }
+    if (best.dataURL && best.bytes <= targetBytes) return best.dataURL;
+
+    if (q > minQuality) { q = Math.max(minQuality, q - 0.1); continue; }
+
+    const nw = Math.max(minW, Math.round(w * downscaleStep));
+    const nh = Math.max(minH, Math.round(h * downscaleStep));
+    if (nw === w && nh === h) {
+      return best.dataURL || tryEncode('image/jpeg', minQuality);
+    }
+    w = nw; h = nh;
+    q = Math.min(0.82, q + 0.1);
+  }
+  return tryEncode('image/jpeg', minQuality);
+}
+
+/* ========= 표시용 경로 정규화 ========= */
 function toSrc(u) {
   if (!u) return '';
   if (u.startsWith('data:') || u.startsWith('http')) return u;
@@ -14,11 +73,9 @@ function toSrc(u) {
   return u;
 }
 
-// ---- 상태 ----
-let selectedFloor = 0;   // 0=전체, 1~4=층
+/* ========= 상태 & 유틸 ========= */
+let selectedFloor = 0;   // 0=전체
 let editing = null;      // { id, floor } | null
-
-// ---- 유틸 ----
 const $ = (s) => document.querySelector(s);
 
 function showScreen(id) {
@@ -37,7 +94,6 @@ function syncRoleUI() {
   $('#btn-delete')?.classList.toggle('hidden', !isAdmin());
 }
 
-// 공통: 안전 삭제
 async function safeDelete(id) {
   try {
     await deleteItem(id);
@@ -50,7 +106,7 @@ async function safeDelete(id) {
   }
 }
 
-// ========================= 로그인 =========================
+/* ========= 로그인 ========= */
 function mountLogin() {
   const idEl = $('#admin-id');
   const pwEl = $('#admin-pw');
@@ -67,7 +123,7 @@ function mountLogin() {
     const pw = (pwEl?.value || '').trim();
     if (!id || !pw) return alert('아이디/비밀번호를 입력하세요.');
     try {
-      await login(id, pw); // 예: a / b
+      await login(id, pw); // (예: a / b)
       alert('관리자 로그인 성공');
       goList();
     } catch (e) {
@@ -76,19 +132,36 @@ function mountLogin() {
     }
   });
 
+  // Enter 키 지원
+  idEl?.addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#btn-admin-submit')?.click(); });
+  pwEl?.addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#btn-admin-submit')?.click(); });
+
   $('#btn-guest-enter')?.addEventListener('click', () => {
     clearToken();
     goList();
   });
 }
 
-// ========================= 목록/검색 =========================
+/* ========= 목록/검색 ========= */
 async function renderList() {
   try {
     const q = ($('#search-input')?.value || '').trim();
     const items = await listItems({ floor: selectedFloor, q });
-    const ul = $('#lost-items');
+    const ul = document.getElementById('lost-items');
+    if (!ul) return;
     ul.innerHTML = '';
+
+    if (!items.length) {
+      const empty = document.createElement('li');
+      empty.className = 'card';
+      empty.style.display = 'flex';
+      empty.style.justifyContent = 'center';
+      empty.style.alignItems = 'center';
+      empty.style.minHeight = '120px';
+      empty.textContent = q ? '검색 결과가 없습니다.' : '등록된 분실물이 없습니다.';
+      ul.appendChild(empty);
+      return;
+    }
 
     items.forEach(it => {
       const li = document.createElement('li');
@@ -96,21 +169,15 @@ async function renderList() {
       li.dataset.id = it.id;
       li.style.position = 'relative';
 
-      // 이미지 (image → imageUrl 순서)
       const img = document.createElement('img');
       img.className = 'card-img';
       img.alt = it.title || '이미지';
       const src = toSrc(it.image || it.imageUrl);
-      if (src) {
-        img.src = src;
-      } else {
-        img.classList.add('hidden');
-      }
+      if (src) img.src = src; else img.classList.add('hidden');
       img.onerror = () => img.classList.add('hidden');
       img.onload  = () => img.classList.remove('hidden');
       li.appendChild(img);
 
-      // 메타
       const meta = document.createElement('div');
       meta.className = 'card-meta';
       const floorEl = document.createElement('div');
@@ -123,7 +190,6 @@ async function renderList() {
       meta.appendChild(nameEl);
       li.appendChild(meta);
 
-      // 관리자 전용: 리스트에서 바로 삭제
       if (isAdmin()) {
         const delBtn = document.createElement('button');
         delBtn.textContent = '삭제';
@@ -149,7 +215,6 @@ async function renderList() {
         li.appendChild(delBtn);
       }
 
-      // 클릭 → 상세
       li.addEventListener('click', () => openDetail(it.id));
       ul.appendChild(li);
     });
@@ -160,7 +225,6 @@ async function renderList() {
 }
 
 function mountList() {
-  // 탭
   for (let i = 0; i <= 4; i++) {
     document.getElementById(`tab-${i}`)?.addEventListener('click', () => {
       selectedFloor = i;
@@ -168,23 +232,21 @@ function mountList() {
       renderList();
     });
   }
-  // 검색
-  $('.search-btn')?.addEventListener('click', renderList);
-  $('#search-input')?.addEventListener('keydown', (e) => {
+  document.querySelector('.search-btn')?.addEventListener('click', renderList);
+  document.getElementById('search-input')?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') renderList();
   });
-  // 글쓰기 FAB
-  $('#fab-manage')?.addEventListener('click', () => openCompose(null));
+  document.getElementById('fab-manage')?.addEventListener('click', () => openCompose(null));
 }
 
-// ========================= 상세 =========================
+/* ========= 상세 ========= */
 async function openDetail(id) {
   try {
     const it = await getItem(id);
-    $('#detail-title').textContent = it.title || '(제목 없음)';
-    $('#detail-floor').textContent = `보관 위치 : ${it.floor}층`;
+    document.getElementById('detail-title').textContent = it.title || '(제목 없음)';
+    document.getElementById('detail-floor').textContent = `보관 위치 : ${it.floor}층`;
 
-    const img = $('#detail-image');
+    const img = document.getElementById('detail-image');
     const src = toSrc(it.image || it.imageUrl);
     if (src) {
       img.src = src;
@@ -193,29 +255,27 @@ async function openDetail(id) {
     } else {
       img.classList.add('hidden');
     }
-    $('#detail-desc').textContent = it.desc || '';
+    document.getElementById('detail-desc').textContent = it.desc || '';
 
     syncRoleUI();
     showScreen('screen-4');
 
-    // 편집/삭제 핸들러
-    $('#btn-edit').onclick = () =>
+    document.getElementById('btn-edit').onclick = () =>
       openCompose({
         id: it.id,
         floor: it.floor,
         title: it.title,
         desc: it.desc,
-        image: it.image,        // data URL
-        imageUrl: it.imageUrl,  // 옛 데이터
+        image: it.image,
+        imageUrl: it.imageUrl,
       });
 
-    $('#btn-delete').onclick = async () => {
+    document.getElementById('btn-delete').onclick = async () => {
       if (!confirm('이 항목을 삭제하시겠습니까?')) return;
       await safeDelete(it.id);
     };
   } catch (e) {
     console.error(e);
-    // 상세 실패 시에도 관리자 강제 삭제 제공
     if (isAdmin() && confirm('상세를 불러오지 못했습니다. 이 항목을 강제로 삭제할까요?')) {
       await safeDelete(id);
       return;
@@ -225,55 +285,59 @@ async function openDetail(id) {
 }
 
 function mountDetailNav() {
-  $('#btn-back-detail')?.addEventListener('click', () => showScreen('screen-2'));
+  document.getElementById('btn-back-detail')?.addEventListener('click', () => showScreen('screen-2'));
 }
 
-// ========================= 글쓰기/수정 =========================
+/* ========= 글쓰기/수정 ========= */
 function openCompose(prefill) {
   if (!isAdmin()) { alert('관리자만 작성할 수 있습니다.'); return; }
   editing = prefill ? { id: prefill.id, floor: prefill.floor } : null;
 
-  $('#form-title').value = prefill?.title || '';
-  $('#form-floor').value = prefill?.floor ?? '';
-  $('#form-desc').value  = prefill?.desc  || '';
+  document.getElementById('form-title').value = prefill?.title || '';
+  document.getElementById('form-floor').value = prefill?.floor ?? '';
+  document.getElementById('form-desc').value  = prefill?.desc  || '';
 
-  const pv = $('#form-preview');
+  const pv = document.getElementById('form-preview');
   const src = toSrc(prefill?.image || prefill?.imageUrl);
-  if (src) {
-    pv.src = src;
-    pv.classList.remove('hidden');
-  } else {
-    pv.src = '';
-    pv.classList.add('hidden');
-  }
+  if (src) { pv.src = src; pv.classList.remove('hidden'); }
+  else { pv.src = ''; pv.classList.add('hidden'); }
 
-  $('#btn-submit').textContent = editing ? '수정 저장' : '글 등록하기';
+  document.getElementById('btn-submit').textContent = editing ? '수정 저장' : '글 등록하기';
   showScreen('screen-3');
 }
 
 async function submitCompose() {
   if (!isAdmin()) return alert('관리자만 등록/수정할 수 있습니다.');
 
-  const title = ($('#form-title').value || '').trim();
-  const floor = Number($('#form-floor').value);
-  const desc  = ($('#form-desc').value || '').trim();
-  const file  = $('#form-image').files[0];
+  const title = (document.getElementById('form-title').value || '').trim();
+  const floor = Number(document.getElementById('form-floor').value);
+  const desc  = (document.getElementById('form-desc').value || '').trim();
+  const file  = document.getElementById('form-image').files[0];
 
   if (!title) return alert('제목을 입력하세요.');
   if (![1, 2, 3, 4].includes(floor)) return alert('보관 위치(층)를 선택하세요.');
 
   try {
-    if (editing) {
-      await updateItem(editing.id, { title, floor, desc, file });
-    } else {
-      await createItem({ title, floor, desc, file });
+    let imageDataURL = null;
+    if (file) {
+      imageDataURL = await resizeImageFile(file, {
+        maxW: 1024, maxH: 1024, quality: 0.82, minQuality: 0.45,
+        targetBytes: 200 * 1024, downscaleStep: 0.85, minW: 640, minH: 640,
+        formatPriority: ['image/webp', 'image/jpeg'],
+      });
     }
-    // reset
-    $('#form-title').value = '';
-    $('#form-floor').value = '';
-    $('#form-desc').value  = '';
-    $('#form-image').value = '';
-    $('#form-preview').classList.add('hidden');
+
+    if (editing) {
+      await updateItem(editing.id, { title, floor, desc, imageDataURL });
+    } else {
+      await createItem({ title, floor, desc, imageDataURL });
+    }
+
+    document.getElementById('form-title').value = '';
+    document.getElementById('form-floor').value = '';
+    document.getElementById('form-desc').value  = '';
+    document.getElementById('form-image').value = '';
+    document.getElementById('form-preview').classList.add('hidden');
 
     showScreen('screen-2');
     renderList();
@@ -284,28 +348,25 @@ async function submitCompose() {
 }
 
 function mountCompose() {
-  // 이미지 미리보기
-  $('#form-image')?.addEventListener('change', () => {
-    const f = $('#form-image').files[0];
-    const pv = $('#form-preview');
+  document.getElementById('form-image')?.addEventListener('change', () => {
+    const f = document.getElementById('form-image').files[0];
+    const pv = document.getElementById('form-preview');
     if (!f) { pv.classList.add('hidden'); return; }
     const reader = new FileReader();
     reader.onload = (e) => { pv.src = e.target.result; pv.classList.remove('hidden'); };
     reader.readAsDataURL(f);
   });
 
-  $('#btn-submit')?.addEventListener('click', submitCompose);
-  $('#btn-back-2')?.addEventListener('click', () => showScreen('screen-2'));
+  document.getElementById('btn-submit')?.addEventListener('click', submitCompose);
+  document.getElementById('btn-back-2')?.addEventListener('click', () => showScreen('screen-2'));
 }
 
-// ========================= 부트스트랩 =========================
+/* ========= 부트스트랩 ========= */
 window.addEventListener('load', () => {
   mountLogin();
   mountList();
   mountCompose();
   mountDetailNav();
-
-  // 첫 화면은 로그인
   showScreen('screen-1');
   syncRoleUI();
 });

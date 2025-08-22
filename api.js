@@ -1,19 +1,24 @@
-// api.js — 백엔드 호출 헬퍼
+// api.js — 최종본
 
-// 배포/로컬 자동 스위치 (뒤 슬래시 ❌)
 export const API =
   location.hostname === 'localhost' || location.hostname === '127.0.0.1'
     ? 'http://127.0.0.1:4000'
     : 'https://lostfound-backend-0js6.onrender.com';
 
-// ===== 토큰 관리 =====
 const tokenKey = 'lf_token';
 export const getToken   = () => localStorage.getItem(tokenKey);
 export const setToken   = (t) => localStorage.setItem(tokenKey, t);
 export const clearToken = () => localStorage.removeItem(tokenKey);
 const authHeader = () => (getToken() ? { Authorization: `Bearer ${getToken()}` } : {});
 
-// ===== 공통 응답 핸들러 =====
+// (선택) 간단한 타임아웃
+async function fetchWithTimeout(url, opts = {}, ms = 15000) {
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), ms);
+  try { return await fetch(url, { ...opts, signal: ac.signal }); }
+  finally { clearTimeout(t); }
+}
+
 async function handle(r) {
   if (r.ok) {
     const ct = r.headers.get('content-type') || '';
@@ -28,9 +33,9 @@ async function handle(r) {
   }
 }
 
-// ===== Auth =====
+/* ===== Auth ===== */
 export async function login(id, password) {
-  const r = await fetch(`${API}/api/auth/login`, {
+  const r = await fetchWithTimeout(`${API}/api/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id, password })
@@ -41,26 +46,26 @@ export async function login(id, password) {
   return data.token;
 }
 
-// ===== Items =====
+/* ===== Items ===== */
 export async function listItems({ floor = 0, q = '' } = {}) {
   const p = new URLSearchParams();
   if (floor) p.set('floor', floor);
   if (q)     p.set('q', q);
-  const qs = p.toString();
-  const r = await fetch(qs ? `${API}/api/items?${qs}` : `${API}/api/items`);
+  p.set('_ts', Date.now()); // 캐시 버스트(선택)
+  const url = `${API}/api/items?${p.toString()}`;
+  const r = await fetchWithTimeout(url);
   const data = await handle(r);
   return data.items || [];
 }
 
 export async function getItem(id) {
-  const r = await fetch(`${API}/api/items/${encodeURIComponent(id)}`);
+  const r = await fetchWithTimeout(`${API}/api/items/${encodeURIComponent(id)}?_ts=${Date.now()}`);
   return handle(r);
 }
 
 export async function createItem({ title, floor, desc, file, imageDataURL }) {
-  // JSON 경로(추천): 리사이즈된 dataURL 전송
   if (imageDataURL && !file) {
-    const r = await fetch(`${API}/api/items`, {
+    const r = await fetchWithTimeout(`${API}/api/items`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeader() },
       body: JSON.stringify({ title, floor, desc, image: imageDataURL })
@@ -68,23 +73,21 @@ export async function createItem({ title, floor, desc, file, imageDataURL }) {
     return handle(r); // { id }
   }
 
-  // (옵션) 파일 경로 유지하고 싶다면
   if (file) {
     const fd = new FormData();
     fd.append('title', title);
     fd.append('floor', floor);
     if (desc) fd.append('desc', desc);
     fd.append('image', file);
-    const r = await fetch(`${API}/api/items`, {
+    const r = await fetchWithTimeout(`${API}/api/items`, {
       method: 'POST',
-      headers: { ...authHeader() }, // FormData는 Content-Type 자동
+      headers: { ...authHeader() },
       body: fd
     });
     return handle(r);
   }
 
-  // 이미지 없이 텍스트만
-  const r = await fetch(`${API}/api/items`, {
+  const r = await fetchWithTimeout(`${API}/api/items`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeader() },
     body: JSON.stringify({ title, floor, desc })
@@ -93,9 +96,8 @@ export async function createItem({ title, floor, desc, file, imageDataURL }) {
 }
 
 export async function updateItem(id, { title, floor, desc, file, imageDataURL }) {
-  // JSON 경로(추천): 리사이즈된 dataURL 전송
   if (imageDataURL && !file) {
-    const r = await fetch(`${API}/api/items/${encodeURIComponent(id)}`, {
+    const r = await fetchWithTimeout(`${API}/api/items/${encodeURIComponent(id)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', ...authHeader() },
       body: JSON.stringify({ title, floor, desc, image: imageDataURL })
@@ -104,14 +106,13 @@ export async function updateItem(id, { title, floor, desc, file, imageDataURL })
     return;
   }
 
-  // (옵션) 파일 경로
   if (file) {
     const fd = new FormData();
     if (title != null) fd.append('title', title);
     if (floor != null) fd.append('floor', floor);
     if (desc  != null) fd.append('desc', desc);
     fd.append('image', file);
-    const r = await fetch(`${API}/api/items/${encodeURIComponent(id)}`, {
+    const r = await fetchWithTimeout(`${API}/api/items/${encodeURIComponent(id)}`, {
       method: 'PUT',
       headers: { ...authHeader() },
       body: fd
@@ -120,8 +121,7 @@ export async function updateItem(id, { title, floor, desc, file, imageDataURL })
     return;
   }
 
-  // 텍스트만 수정
-  const r = await fetch(`${API}/api/items/${encodeURIComponent(id)}`, {
+  const r = await fetchWithTimeout(`${API}/api/items/${encodeURIComponent(id)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', ...authHeader() },
     body: JSON.stringify({ title, floor, desc })
@@ -129,16 +129,16 @@ export async function updateItem(id, { title, floor, desc, file, imageDataURL })
   await handle(r);
 }
 
-// (선택) 핑
-export async function ping() {
-  const r = await fetch(`${API}/`);
-  return handle(r);
+export async function deleteItem(id) {
+  const r = await fetchWithTimeout(`${API}/api/items/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers: { ...authHeader() }
+  });
+  await handle(r);
 }
 
-async function fetchWithTimeout(url, opts = {}, ms = 15000) {
-  const ac = new AbortController();
-  const t = setTimeout(() => ac.abort(), ms);
-  try { return await fetch(url, { ...opts, signal: ac.signal }); }
-  finally { clearTimeout(t); }
+// (선택) 서버 상태 확인
+export async function ping() {
+  const r = await fetchWithTimeout(`${API}/`);
+  return handle(r);
 }
-// 사용 예: const r = await fetchWithTimeout(`${API}/api/items?...`);
